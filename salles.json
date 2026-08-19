@@ -1,0 +1,29 @@
+[
+  {
+    "id": "tableaux",
+    "nom": "Salle Tableaux",
+    "emoji": "🎨",
+    "wall": "#F3EDE4",
+    "floor": "#8B7260",
+    "ceil": "#FAF7F2",
+    "amb": "#FFE8D0"
+  },
+  {
+    "id": "macrame",
+    "nom": "Salle Macramé",
+    "emoji": "🪢",
+    "wall": "#E8DFD3",
+    "floor": "#9B8B7A",
+    "ceil": "#F3EDE4",
+    "amb": "#E0E8D8"
+  },
+  {
+    "id": "pyrogravure",
+    "nom": "Salle Pyrogravure",
+    "emoji": "🔥",
+    "wall": "#E0D5C8",
+    "floor": "#6B5A4A",
+    "ceil": "#EDE4D8",
+    "amb": "#FFDEC0"
+  }
+]

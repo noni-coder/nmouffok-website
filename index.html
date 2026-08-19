@@ -192,6 +192,11 @@
         .sold-ribbon{position:absolute;top:12px;right:12px;background:#8B2E2E;color:#fff;font-size:.68rem;padding:.3rem .7rem;letter-spacing:.12em;text-transform:uppercase;border-radius:2px;font-family:var(--fs,sans-serif)}
         .card.sold .card-img{filter:grayscale(.45);opacity:.9}
         .btn-cart[disabled],#mCartBtn[disabled]{opacity:.5;cursor:not-allowed}
+        .gal-wrap{position:relative}
+        .gnav{position:absolute;top:50%;transform:translateY(-50%);z-index:5;background:rgba(42,34,32,.55);color:#E8DFD3;border:1px solid rgba(232,223,211,.35);width:44px;height:64px;font-size:1.7rem;line-height:1;cursor:pointer;border-radius:8px;transition:background .2s}
+        .gnav:hover{background:rgba(42,34,32,.88)}
+        #gnavL{left:14px}
+        #gnavR{right:14px}
         .ci-rm{background:none;border:none;color:var(--brun);cursor:pointer;font-size:1rem;padding:.3rem}
         .ci-rm:hover{color:#c0392b}
         .cpan-f{padding:1.5rem 2rem;border-top:1px solid var(--sable)}
@@ -335,14 +340,12 @@
             <h2>Galerie Virtuelle</h2>
             <hr>
         </div>
-        <div class="room-tabs">
-            <button class="rtab on" data-room="tableaux">🎨 Salle Tableaux</button>
-            <button class="rtab" data-room="macrame">🪢 Salle Macramé</button>
-            <button class="rtab" data-room="pyrogravure">🔥 Salle Pyrogravure</button>
-        </div>
+        <div class="room-tabs" id="roomTabs"></div>
         <div class="gal-wrap" id="galWrap">
             <canvas id="gc"></canvas>
-            <div class="gal-hint" id="hint">Glissez pour regarder · Molette pour avancer · Cliquez sur une œuvre</div>
+            <button class="gnav" id="gnavL" aria-label="Aller à gauche">‹</button>
+            <button class="gnav" id="gnavR" aria-label="Aller à droite">›</button>
+            <div class="gal-hint" id="hint">Glissez pour regarder · Molette ou ↑↓ pour avancer · ‹ › pour se promener de salle en salle · Cliquez sur une œuvre</div>
         </div>
     </div>
 </section>
@@ -416,6 +419,13 @@
 <script>
 /* DATA */
 var ART=[]; /* chargé depuis data/oeuvres.json */
+var SALLES=[];var salleActive=0; /* chargé depuis data/salles.json */
+function salleDe(a){return a.salle||a.cat}
+function renderTabs(){
+    var rt=document.getElementById('roomTabs');if(!rt)return;
+    rt.innerHTML=SALLES.map(function(s,i){return '<button class="rtab'+(i===salleActive?' on':'')+'" data-i="'+i+'">'+(s.emoji||'🖼')+' '+s.nom+'</button>'}).join('');
+    rt.querySelectorAll('.rtab').forEach(function(b){b.onclick=function(){if(window.goSalle)window.goSalle(parseInt(b.dataset.i,10),false)}});
+}
 
 var cart=[];
 
@@ -524,11 +534,6 @@ function init3D(){
     renderer.setPixelRatio(Math.min(window.devicePixelRatio,2));
     renderer.shadowMap.enabled=true;
 
-    var rooms={
-        tableaux:{wall:0xF3EDE4,floor:0x8B7260,ceil:0xFAF7F2,amb:0xFFE8D0,items:ART.filter(function(a){return a.cat==='tableaux'})},
-        macrame:{wall:0xE8DFD3,floor:0x9B8B7A,ceil:0xF3EDE4,amb:0xE0E8D8,items:ART.filter(function(a){return a.cat==='macrame'})},
-        pyrogravure:{wall:0xE0D5C8,floor:0x6B5A4A,ceil:0xEDE4D8,amb:0xFFDEC0,items:ART.filter(function(a){return a.cat==='pyrogravure'})}
-    };
 
     var roomGrp=new THREE.Group();scene.add(roomGrp);
     var artMeshes=[];
@@ -546,7 +551,10 @@ function init3D(){
     function buildRoom(name){
         for(var i=roomGrp.children.length-1;i>=0;i--){var c=roomGrp.children[i];roomGrp.remove(c);if(c.geometry)c.geometry.dispose();if(c.material){if(Array.isArray(c.material))c.material.forEach(function(m){m.dispose()});else c.material.dispose()}}
         artMeshes=[];
-        var cfg=rooms[name],RW=14,RH=4,RD=10;
+        var s=SALLES[name]||SALLES[0];
+        var cfg={wall:new THREE.Color(s.wall),floor:new THREE.Color(s.floor),ceil:new THREE.Color(s.ceil),amb:new THREE.Color(s.amb),
+                 items:ART.filter(function(a){return salleDe(a)===s.id})};
+        var RW=14,RH=4,RD=10;
 
         var fl=new THREE.Mesh(new THREE.PlaneGeometry(RW,RD),new THREE.MeshStandardMaterial({color:cfg.floor,roughness:.85}));
         fl.rotation.x=-Math.PI/2;fl.receiveShadow=true;roomGrp.add(fl);
@@ -561,12 +569,10 @@ function init3D(){
         roomGrp.add(new THREE.AmbientLight(cfg.amb,0.45));
         var pl=new THREE.PointLight(0xFFF5E6,0.4,15);pl.position.set(0,RH-0.5,0);roomGrp.add(pl);
 
-        var positions=[
-            {p:[-RW*0.25,RH/2+0.2,-RD/2+0.08],r:[0,0,0]},
-            {p:[RW*0.25,RH/2+0.2,-RD/2+0.08],r:[0,0,0]},
-            {p:[-RW/2+0.08,RH/2+0.2,-1],r:[0,Math.PI/2,0]},
-            {p:[RW/2-0.08,RH/2+0.2,-1],r:[0,-Math.PI/2,0]}
-        ];
+        var positions=[];
+        [-0.36,-0.12,0.12,0.36].forEach(function(fx){positions.push({p:[RW*fx,RH/2+0.2,-RD/2+0.08],r:[0,0,0]})});
+        [-2.6,0,2.6].forEach(function(z){positions.push({p:[-RW/2+0.08,RH/2+0.2,z],r:[0,Math.PI/2,0]})});
+        [-2.6,0,2.6].forEach(function(z){positions.push({p:[RW/2-0.08,RH/2+0.2,z],r:[0,-Math.PI/2,0]})});
 
         cfg.items.forEach(function(art,i){
             if(i>=positions.length)return;
@@ -596,14 +602,14 @@ function init3D(){
         bench.position.set(0,0.225,2);bench.castShadow=true;roomGrp.add(bench);
     }
 
-    buildRoom('tableaux');
-
-    document.querySelectorAll('.rtab').forEach(function(tab){
-        tab.onclick=function(){
-            document.querySelectorAll('.rtab').forEach(function(t){t.classList.remove('on')});tab.classList.add('on');
-            camTgt.set(0,1.6,4.5);lookTgt.set(0,1.6,0);aY=0;aX=0;buildRoom(tab.dataset.room);
-        };
-    });
+    window.goSalle=function(i,garderCam){
+        salleActive=(i+SALLES.length)%SALLES.length;
+        renderTabs();
+        if(!garderCam){camTgt.set(0,1.6,4.5);lookTgt.set(0,1.6,0);aY=0;aX=0;}
+        buildRoom(salleActive);
+        if(typeof toast==='function'&&garderCam)toast((SALLES[salleActive].emoji||'🖼')+' '+SALLES[salleActive].nom);
+    };
+    buildRoom(salleActive);
 
     var dragging=false,prevM={x:0,y:0};
     var camTgt=new THREE.Vector3(0,1.6,4.5),lookTgt=new THREE.Vector3(0,1.6,0);
@@ -625,6 +631,36 @@ function init3D(){
         camTgt.add(fwd);camTgt.x=Math.max(-5.5,Math.min(5.5,camTgt.x));camTgt.z=Math.max(-3.5,Math.min(5,camTgt.z));
         lookTgt.set(camTgt.x+Math.sin(aY)*5,camTgt.y+aX*3,camTgt.z-Math.cos(aY)*5);
     },{passive:false});
+
+    function strafe(dir){
+        var pas=1.1;
+        var vx=Math.cos(aY)*dir*pas, vz=Math.sin(aY)*dir*pas;
+        var avantX=camTgt.x;
+        camTgt.x=Math.max(-5.5,Math.min(5.5,camTgt.x+vx));
+        camTgt.z=Math.max(-3.5,Math.min(5,camTgt.z+vz));
+        if(Math.abs(camTgt.x-avantX)<0.05&&Math.abs(vx)>0.3&&SALLES.length>1){
+            var sens=vx>0?1:-1;
+            window.goSalle(salleActive+sens,true);
+            camTgt.x=-sens*5.2;
+        }
+        lookTgt.set(camTgt.x+Math.sin(aY)*5,camTgt.y+aX*3,camTgt.z-Math.cos(aY)*5);
+    }
+    document.getElementById('gnavL').onclick=function(){strafe(-1)};
+    document.getElementById('gnavR').onclick=function(){strafe(1)};
+    window.addEventListener('keydown',function(e){
+        var r=wrap.getBoundingClientRect();
+        if(r.bottom<0||r.top>window.innerHeight)return;
+        if(e.key==='ArrowLeft'){strafe(-1);e.preventDefault();}
+        else if(e.key==='ArrowRight'){strafe(1);e.preventDefault();}
+        else if(e.key==='ArrowUp'||e.key==='ArrowDown'){
+            var d=(e.key==='ArrowUp')?1:-1;
+            camTgt.add(new THREE.Vector3(Math.sin(aY),0,-Math.cos(aY)).multiplyScalar(d*0.9));
+            camTgt.x=Math.max(-5.5,Math.min(5.5,camTgt.x));
+            camTgt.z=Math.max(-3.5,Math.min(5,camTgt.z));
+            lookTgt.set(camTgt.x+Math.sin(aY)*5,camTgt.y+aX*3,camTgt.z-Math.cos(aY)*5);
+            e.preventDefault();
+        }
+    });
 
     var tS=null;
     canvas.addEventListener('touchstart',function(e){if(e.touches.length===1)tS={x:e.touches[0].clientX,y:e.touches[0].clientY}});
@@ -670,11 +706,19 @@ function init3D(){
     setTimeout(onResize,500);
 }
 
-/* CHARGEMENT DES ŒUVRES */
-fetch('data/oeuvres.json?v='+Date.now())
-    .then(function(r){if(!r.ok)throw new Error(r.status);return r.json()})
-    .then(function(d){ART=d;renderGrid('all');init3D();})
-    .catch(function(e){console.error('Erreur chargement des œuvres:',e);document.getElementById('colGrid').innerHTML='<p style="text-align:center;grid-column:1/-1;font-style:italic">Les œuvres arrivent bientôt…</p>'});
+/* CHARGEMENT DES ŒUVRES ET DES SALLES */
+Promise.all([
+    fetch('data/oeuvres.json?v='+Date.now()).then(function(r){if(!r.ok)throw new Error(r.status);return r.json()}),
+    fetch('data/salles.json?v='+Date.now()).then(function(r){return r.ok?r.json():null}).catch(function(){return null})
+]).then(function(res){
+    ART=res[0];
+    SALLES=(res[1]&&res[1].length)?res[1]:[
+        {id:'tableaux',nom:'Salle Tableaux',emoji:'🎨',wall:'#F3EDE4',floor:'#8B7260',ceil:'#FAF7F2',amb:'#FFE8D0'},
+        {id:'macrame',nom:'Salle Macramé',emoji:'🪢',wall:'#E8DFD3',floor:'#9B8B7A',ceil:'#F3EDE4',amb:'#E0E8D8'},
+        {id:'pyrogravure',nom:'Salle Pyrogravure',emoji:'🔥',wall:'#E0D5C8',floor:'#6B5A4A',ceil:'#EDE4D8',amb:'#FFDEC0'}
+    ];
+    renderTabs();renderGrid('all');init3D();
+}).catch(function(e){console.error('Erreur chargement des œuvres:',e);document.getElementById('colGrid').innerHTML='<p style="text-align:center;grid-column:1/-1;font-style:italic">Les œuvres arrivent bientôt…</p>'});
 </script>
 </body>
 </html>
