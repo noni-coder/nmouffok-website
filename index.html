@@ -657,7 +657,13 @@ function init3D(){
 
         cfg.items.forEach(function(art,i){
             if(i>=positions.length)return;
-            var pos=positions[i],fW=1.6,fH=2.0;
+            var pos=positions[i];
+            /* Cadre fidèle aux proportions réelles de l'œuvre */
+            var r=art.ratio||0.8;           /* défaut : portrait 1.6x2.0 */
+            var fH=2.0,fW=fH*r;
+            if(fW>2.3){fW=2.3;fH=fW/r;}     /* paysage large : limite en largeur */
+            if(fW<0.5){fW=0.5;fH=fW/r;}     /* garde-fou format très étroit */
+            if(fH>2.6)fH=2.6;
             var frame=new THREE.Mesh(new THREE.BoxGeometry(fW+0.1,fH+0.1,0.06),new THREE.MeshStandardMaterial({color:0x3D3330,roughness:.3,metalness:.1}));
             frame.position.set(pos.p[0],pos.p[1],pos.p[2]);frame.rotation.set(pos.r[0],pos.r[1],pos.r[2]);frame.castShadow=true;roomGrp.add(frame);
 

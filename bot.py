@@ -16,7 +16,7 @@ import unicodedata
 from pathlib import Path
 
 from dotenv import load_dotenv
-from PIL import Image, ImageOps, ImageEnhance
+from PIL import Image, ImageOps, ImageEnhance, ImageChops, ImageFilter
 import anthropic
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -49,11 +49,11 @@ SEEN_FILE = BASE / "drive_vus.json"
 SALLES_PATH = SITE_DIR / "data" / "salles.json"
 
 SALLES_DEFAUT = [
-    {"id": "tableaux", "nom": "Salle Tableaux", "emoji": "🎨",
+    {"id": "tableaux", "nom": "Salle principale", "emoji": "🎨", "groupe": "tableaux",
      "wall": "#F3EDE4", "floor": "#8B7260", "ceil": "#FAF7F2", "amb": "#FFE8D0"},
-    {"id": "macrame", "nom": "Salle Macramé", "emoji": "🪢",
+    {"id": "macrame", "nom": "Salle principale", "emoji": "🪢", "groupe": "macrame",
      "wall": "#E8DFD3", "floor": "#9B8B7A", "ceil": "#F3EDE4", "amb": "#E0E8D8"},
-    {"id": "pyrogravure", "nom": "Salle Pyrogravure", "emoji": "🔥",
+    {"id": "pyrogravure", "nom": "Salle principale", "emoji": "🔥", "groupe": "pyrogravure",
      "wall": "#E0D5C8", "floor": "#6B5A4A", "ceil": "#EDE4D8", "amb": "#FFDEC0"},
 ]
 
@@ -98,7 +98,15 @@ def lire_salles() -> list:
             json.dump(SALLES_DEFAUT, f, ensure_ascii=False, indent=2)
         return list(SALLES_DEFAUT)
     with open(SALLES_PATH, encoding="utf-8") as f:
-        return json.load(f)
+        salles = json.load(f)
+    modifie = False
+    for s in salles:
+        if "groupe" not in s:
+            s["groupe"] = s["id"] if s["id"] in CATS else "tableaux"
+            modifie = True
+    if modifie:
+        ecrire_salles(salles)
+    return salles
 
 
 def ecrire_salles(salles: list) -> None:
@@ -127,21 +135,104 @@ def slug(txt: str) -> str:
     return "".join(c if c.isalnum() else "-" for c in txt.lower()).strip("-")[:40] or "oeuvre"
 
 
-def sublimer(brut: bytes) -> bytes:
-    """Retouche douce : orientation, recadrage auto, lumière, couleurs, netteté."""
+def recadrer_oeuvre(img: Image.Image) -> Image.Image:
+    """Détecte la toile photographiée sur un mur uni et rogne le mur autour.
+    Prudent : si la détection est douteuse, l'image d'origine est conservée."""
+    petit = img.copy()
+    petit.thumbnail((400, 400), Image.LANCZOS)
+    w, h = petit.size
+    # Couleur du mur estimée par la médiane des 4 coins
+    coins = [petit.getpixel((2, 2)), petit.getpixel((w - 3, 2)),
+             petit.getpixel((2, h - 3)), petit.getpixel((w - 3, h - 3))]
+    fond = tuple(sorted(c[i] for c in coins)[1] for i in range(3))
+    diff_brut = ImageChops.difference(petit, Image.new("RGB", petit.size, fond)).convert("L")
+    diff = diff_brut.point(lambda p: 255 if p > 35 else 0)
+    diff = diff.filter(ImageFilter.MedianFilter(5))
+    bbox = diff.getbbox()
+    if not bbox:
+        return img
+    # Resserrage côté par côté : on avance chaque bord tant que la ligne/colonne
+    # n'est pas franchement de la toile. Seuil haut (55) pour ne pas confondre
+    # l'ombre portée sur le mur avec de la matière peinte.
+    px = list(diff_brut.getdata())
+    def col_ok(x, t0, b0):
+        seg = [px[y * w + x] for y in range(t0, b0)]
+        return sum(1 for v in seg if v > 55) / max(1, len(seg)) >= 0.70
+    def row_ok(y, l0, r0):
+        seg = px[y * w + l0:y * w + r0]
+        return sum(1 for v in seg if v > 55) / max(1, len(seg)) >= 0.70
+    l0, t0, r0, b0 = bbox
+    lim_x, lim_y = int((r0 - l0) * 0.12), int((b0 - t0) * 0.12)
+    while l0 < bbox[0] + lim_x and not col_ok(l0, t0, b0): l0 += 1
+    while r0 > bbox[2] - lim_x and not col_ok(r0 - 1, t0, b0): r0 -= 1
+    while t0 < bbox[1] + lim_y and not row_ok(t0, l0, r0): t0 += 1
+    while b0 > bbox[3] - lim_y and not row_ok(b0 - 1, l0, r0): b0 -= 1
+    sx, sy = img.width / w, img.height / h
+    l, t = int(l0 * sx), int(t0 * sy)
+    r, b = int(r0 * sx), int(b0 * sy)
+    # Léger retrait supplémentaire (0.5 %) : ombres de bord
+    mx, my = int((r - l) * 0.005), int((b - t) * 0.005)
+    l, t, r, b = l + mx, t + my, r - mx, b - my
+    aire = (r - l) * (b - t) / float(img.width * img.height)
+    if aire < 0.25 or aire > 0.98 or r <= l or b <= t:
+        return img  # détection douteuse : on ne touche à rien
+    return img.crop((l, t, r, b))
+
+
+def encadrer(img: Image.Image) -> Image.Image:
+    """Encadrement de galeriste : filet doré autour de l'œuvre, passe-partout
+    crème assorti au site, fin liseré doré extérieur. Désactivable avec
+    CADRE_PHOTO=non dans config.env."""
+    if os.getenv("CADRE_PHOTO", "oui").lower() in ("non", "no", "0", "false"):
+        return img
+    m = min(img.size)
+    filet = max(3, int(m * 0.008))      # filet doré contre l'œuvre
+    marge = max(20, int(m * 0.055))     # passe-partout crème
+    lisere = max(2, int(m * 0.004))     # liseré doré extérieur
+    dore = (176, 141, 87)
+    creme = (250, 247, 242)
+    img = ImageOps.expand(img, border=filet, fill=dore)
+    img = ImageOps.expand(img, border=marge, fill=creme)
+    img = ImageOps.expand(img, border=lisere, fill=dore)
+    return img
+
+
+def sublimer(brut: bytes) -> tuple:
+    """Retouche douce : orientation, rognage du mur, lumière, couleurs, netteté.
+    Retourne (jpeg_bytes, ratio largeur/hauteur) pour un cadre 3D fidèle."""
     img = Image.open(io.BytesIO(brut))
     img = ImageOps.exif_transpose(img)
     if img.mode != "RGB":
         img = img.convert("RGB")
-    img = ImageOps.autocontrast(img, cutoff=1)
+    img = recadrer_oeuvre(img)
+    # Retouche volontairement discrète : fidélité aux couleurs réelles avant tout
+    img = ImageEnhance.Contrast(img).enhance(1.06)
     img = ImageEnhance.Brightness(img).enhance(1.03)
-    img = ImageEnhance.Color(img).enhance(1.08)
+    img = ImageEnhance.Color(img).enhance(1.05)
     img = ImageEnhance.Sharpness(img).enhance(1.15)
+    img = encadrer(img)
     if max(img.size) > 1800:
         img.thumbnail((1800, 1800), Image.LANCZOS)
+    ratio = round(img.width / img.height, 3)
     out = io.BytesIO()
     img.save(out, "JPEG", quality=88, optimize=True)
-    return out.getvalue()
+    return out.getvalue(), ratio
+
+
+PLACES_PAR_SALLE = 10  # emplacements muraux dans la galerie 3D
+
+
+def salles_du_groupe(groupe: str) -> list:
+    """Salles d'une aile avec leur nombre de places libres, triées par espace."""
+    data = lire_oeuvres()
+    resultat = []
+    for s in lire_salles():
+        if s.get("groupe", s["id"]) != groupe:
+            continue
+        occupees = sum(1 for o in data if salle_de(o) == s["id"])
+        resultat.append((s, PLACES_PAR_SALLE - occupees))
+    resultat.sort(key=lambda x: -x[1])
+    return resultat
 
 
 def enregistrer_image(oid: str, titre: str, donnees: bytes) -> str:
@@ -235,21 +326,30 @@ async def surveiller_drive(context: ContextTypes.DEFAULT_TYPE):
     for f in nouvelles[:3]:  # au plus 3 par passage
         try:
             brut = drive_telecharger(svc, f["id"])
-            photo = sublimer(brut)
+            photo, ratio = sublimer(brut)
             infos = analyser_photo(photo)
             cle = f"d{int(time.time() * 1000) % 10**9}"
-            context.bot_data.setdefault("attente", {})[cle] = {"photo": photo, "infos": infos}
-            boutons = InlineKeyboardMarkup([[
-                InlineKeyboardButton("✅ Valider", callback_data=f"dv:{cle}"),
-                InlineKeyboardButton("❌ Refuser", callback_data=f"dr:{cle}"),
-            ]])
+            context.bot_data.setdefault("attente", {})[cle] = {
+                "photo": photo, "infos": infos, "ratio": ratio}
+            salles = salles_du_groupe(infos["categorie"])
+            lignes_boutons = []
+            for s, libres in salles[:4]:
+                etiquette = f"🖼 {s['nom']}" + (f" ({libres} pl.)" if libres > 0 else " (complète)")
+                lignes_boutons.append([InlineKeyboardButton(
+                    etiquette, callback_data=f"dv:{cle}:{s['id']}")])
+            lignes_boutons.append([InlineKeyboardButton("❌ Refuser", callback_data=f"dr:{cle}")])
+            boutons = InlineKeyboardMarkup(lignes_boutons)
+            meilleure = salles[0][0]["nom"] if salles else "?"
+            fmt = "paysage" if ratio > 1.05 else ("carré" if ratio > 0.95 else "portrait")
             legende = (f"🖼 Nouvelle photo Drive : {f['name']}\n\n"
                        f"✨ Proposition :\n"
                        f"Titre : {infos['titre']}\n"
                        f"Catégorie : {CATS[infos['categorie']]}\n"
                        f"Technique : {infos['technique']}\n"
+                       f"Format : {fmt} ({ratio})\n"
                        f"Texte : {infos['description']}\n\n"
-                       f"Prix et dimensions à compléter ensuite avec /prix et /texte.")
+                       f"📍 Emplacement conseillé : {meilleure}\n"
+                       f"Choisis la salle où l'accrocher :")
             for uid in ALLOWED_IDS:
                 try:
                     await context.bot.send_photo(uid, photo=photo, caption=legende, reply_markup=boutons)
@@ -267,7 +367,9 @@ async def rep_drive(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await q.answer()
     if not autorise(update):
         return
-    action, cle = q.data.split(":", 1)
+    parts = q.data.split(":")
+    action, cle = parts[0], parts[1]
+    salle_choisie = parts[2] if len(parts) > 2 else None
     item = context.bot_data.get("attente", {}).pop(cle, None)
     if not item:
         await q.edit_message_caption(caption="⏰ Proposition expirée (bot redémarré).")
@@ -279,17 +381,20 @@ async def rep_drive(update: Update, context: ContextTypes.DEFAULT_TYPE):
     infos = item["infos"]
     oid = nouvel_id(data, infos["categorie"])
     chemin = enregistrer_image(oid, infos["titre"], item["photo"])
+    salle_finale = salle_choisie or infos["categorie"]
     data.append({
         "id": oid, "title": infos["titre"], "cat": infos["categorie"],
         "catL": CATS[infos["categorie"]], "tech": infos["technique"],
         "desc": infos["description"], "dim": "", "price": 0,
         "c1": "#C4A282", "c2": "#A3B5A0", "img": chemin, "statut": "disponible",
-        "salle": infos["categorie"],
+        "salle": salle_finale, "ratio": item.get("ratio"),
     })
     ecrire_oeuvres(data)
+    nom_salle = next((s["nom"] for s in lire_salles() if s["id"] == salle_finale), salle_finale)
     await q.edit_message_caption(
-        caption=f"✅ Œuvre {oid} ajoutée à la galerie !\n"
-                f"Pense à compléter : /prix {oid} <montant> et /texte {oid} si besoin.")
+        caption=f"✅ Œuvre {oid} accrochée dans « {nom_salle} » !\n"
+                f"À compléter : /prix {oid} <montant>\n"
+                f"Pour ajuster : /titre {oid} <nom> · /texte {oid}")
 
 
 # ------------------------------------------------------------------ COMMANDES SIMPLES
@@ -300,6 +405,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🎨 Bot galerie nmouffok.fr\n\n"
         "/liste — voir les œuvres\n"
         "/ajouter — ajouter une œuvre (photo + infos)\n"
+        "/titre <id> <nom> — renommer une œuvre\n"
         "/texte <id> — modifier le texte d'une œuvre\n"
         "/prix <id> <montant> — modifier un prix\n"
         "/vendu <id> — marquer vendue\n"
@@ -416,11 +522,16 @@ async def cmd_salles(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     salles = lire_salles()
     data = lire_oeuvres()
-    lignes = ["🏛 Salles de la galerie :\n"]
-    for s in salles:
-        n = sum(1 for o in data if salle_de(o) == s["id"])
-        lignes.append(f"{s.get('emoji','🖼')} {s['id']} · {s['nom']} · {n} œuvre(s)")
-    lignes.append("\n/nouvellesalle <emoji> <nom> — créer une salle")
+    lignes = ["🏛 Salles de la galerie :"]
+    for gid, glabel in CATS.items():
+        du_groupe = [s for s in salles if s.get("groupe", s["id"]) == gid]
+        if du_groupe:
+            lignes.append(f"\n— Aile {glabel}s —")
+            for s in du_groupe:
+                n = sum(1 for o in data if salle_de(o) == s["id"])
+                lignes.append(f"{s.get('emoji','🖼')} {s['id']} · {s['nom']} · {n} œuvre(s)")
+    lignes.append("\n/nouvellesalle <aile> <emoji> <nom> — créer une salle")
+    lignes.append("   (aile : tableaux, macrame ou pyrogravure)")
     lignes.append("/deplacer <œuvre> <salle> — déplacer une œuvre")
     lignes.append("/supprimersalle <salle> — retirer une salle vide")
     await update.message.reply_text("\n".join(lignes))
@@ -429,10 +540,14 @@ async def cmd_salles(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_nouvellesalle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not autorise(update):
         return
-    if not context.args:
-        await update.message.reply_text("Utilisation : /nouvellesalle 🌙 Petits formats")
-        return
     args = list(context.args)
+    if not args or args[0] not in CATS:
+        await update.message.reply_text(
+            "Utilisation : /nouvellesalle <aile> <emoji> <nom>\n"
+            "Ailes possibles : tableaux, macrame, pyrogravure\n"
+            "Exemple : /nouvellesalle tableaux 🌙 Petits formats")
+        return
+    groupe = args.pop(0)
     emoji = ""
     if args and not args[0].isalnum() and len(args[0]) <= 3:
         emoji = args.pop(0)
@@ -446,10 +561,10 @@ async def cmd_nouvellesalle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Une salle « {sid} » existe déjà.")
         return
     pal = PALETTES[len(salles) % len(PALETTES)]
-    salles.append({"id": sid, "nom": nom, "emoji": emoji or "🖼", **pal})
+    salles.append({"id": sid, "nom": nom, "emoji": emoji or "🖼", "groupe": groupe, **pal})
     ecrire_salles(salles)
     await update.message.reply_text(
-        f"🏛 Salle « {nom} » créée (id : {sid}).\n"
+        f"🏛 Salle « {nom} » créée dans l'aile {CATS[groupe]}s (id : {sid}).\n"
         f"Déplace des œuvres avec : /deplacer t1 {sid}")
 
 
@@ -502,6 +617,26 @@ async def cmd_supprimersalle(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await update.message.reply_text(f"🏛 Salle « {s['nom']} » retirée.")
 
 
+async def cmd_titre(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Renommer une œuvre : /titre t1 Nouveau nom"""
+    if not autorise(update):
+        return
+    if len(context.args) < 2:
+        await update.message.reply_text("Utilisation : /titre t1 Le nouveau titre")
+        return
+    oid = context.args[0]
+    nouveau = " ".join(context.args[1:]).strip()
+    data = lire_oeuvres()
+    o = trouver(data, oid)
+    if not o:
+        await update.message.reply_text(f"Œuvre {oid} introuvable (voir /liste).")
+        return
+    ancien = o["title"]
+    o["title"] = nouveau
+    ecrire_oeuvres(data)
+    await update.message.reply_text(f"✏️ « {ancien} » s'appelle désormais « {nouveau} ».")
+
+
 # ------------------------------------------------------------------ /texte (dialogue)
 T_ATTENTE = 0
 
@@ -546,8 +681,9 @@ async def aj_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     photo = update.message.photo[-1]
     fichier = await photo.get_file()
     brut = bytes(await fichier.download_as_bytearray())
-    retouchee = sublimer(brut)
+    retouchee, ratio = sublimer(brut)
     context.user_data["nouv"]["photo"] = retouchee
+    context.user_data["nouv"]["ratio"] = ratio
     infos = analyser_photo(retouchee)
     context.user_data["nouv"]["sugg"] = infos
     await update.message.reply_text(
@@ -615,7 +751,7 @@ async def aj_prix(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "id": oid, "title": n["titre"], "cat": n["cat"], "catL": CATS[n["cat"]],
         "tech": n["tech"], "desc": n["desc"], "dim": n["dim"], "price": prix,
         "c1": "#C4A282", "c2": "#A3B5A0", "img": chemin, "statut": "disponible",
-        "salle": n["cat"],
+        "salle": n["cat"], "ratio": n.get("ratio"),
     })
     ecrire_oeuvres(data)
     await update.message.reply_text(
@@ -636,6 +772,7 @@ def main():
     app.add_handler(CommandHandler(["start", "aide", "help"], cmd_start))
     app.add_handler(CommandHandler("liste", cmd_liste))
     app.add_handler(CommandHandler("prix", cmd_prix))
+    app.add_handler(CommandHandler("titre", cmd_titre))
     app.add_handler(CommandHandler("vendu", cmd_vendu))
     app.add_handler(CommandHandler("dispo", cmd_dispo))
     app.add_handler(CommandHandler("supprimer", cmd_supprimer))
