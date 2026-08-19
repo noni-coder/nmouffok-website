@@ -188,6 +188,10 @@
         .ci-name{font-family:var(--ff);font-size:1rem;color:var(--brun2)}
         .ci-cat{font-size:.68rem;color:var(--brun);letter-spacing:.1em;text-transform:uppercase}
         .ci-price{font-family:var(--ff);font-size:.95rem;color:var(--terre);margin-top:.2rem}
+        .card-img{position:relative}
+        .sold-ribbon{position:absolute;top:12px;right:12px;background:#8B2E2E;color:#fff;font-size:.68rem;padding:.3rem .7rem;letter-spacing:.12em;text-transform:uppercase;border-radius:2px;font-family:var(--fs,sans-serif)}
+        .card.sold .card-img{filter:grayscale(.45);opacity:.9}
+        .btn-cart[disabled],#mCartBtn[disabled]{opacity:.5;cursor:not-allowed}
         .ci-rm{background:none;border:none;color:var(--brun);cursor:pointer;font-size:1rem;padding:.3rem}
         .ci-rm:hover{color:#c0392b}
         .cpan-f{padding:1.5rem 2rem;border-top:1px solid var(--sable)}
@@ -411,20 +415,7 @@
 
 <script>
 /* DATA */
-var ART=[
-{id:'t1',title:'Éveil Intérieur',cat:'tableaux',catL:'Tableau',tech:'Acrylique sur toile',desc:'Une explosion douce de couleurs chaudes évoquant le premier souffle de conscience. Les couches se superposent comme les strates de notre être intérieur.',dim:'80 × 60 cm',price:450,c1:'#C4A282',c2:'#A3B5A0'},
-{id:'t2',title:"Songe d'Automne",cat:'tableaux',catL:'Tableau',tech:'Technique mixte sur toile',desc:"Les teintes automnales se mêlent dans un tourbillon méditatif. Chaque touche est une feuille qui tombe, chaque nuance un souvenir qui s'envole.",dim:'100 × 80 cm',price:620,c1:'#8B7260',c2:'#C9A96E'},
-{id:'t3',title:'Silence Doré',cat:'tableaux',catL:'Tableau',tech:"Huile et feuille d'or sur toile",desc:"Le silence a une couleur : celle de l'or posé délicatement sur la toile. Un instant suspendu où le monde s'efface pour la contemplation pure.",dim:'70 × 70 cm',price:550,c1:'#C9A96E',c2:'#D4B5A0'},
-{id:'t4',title:'Murmure Céleste',cat:'tableaux',catL:'Tableau',tech:'Acrylique et encre sur toile',desc:"Un chuchotement venu d'un autre monde. Les bleus et gris se fondent dans une danse aérienne invitant l'âme à s'élever.",dim:'90 × 70 cm',price:520,c1:'#B8A9C8',c2:'#A3B5A0'},
-{id:'m1',title:'Enlacement',cat:'macrame',catL:'Macramé',tech:'Coton naturel tressé à la main',desc:"Un entrelacs délicat de fils formant une sculpture organique. Chaque nœud est un battement de cœur, chaque boucle un souffle de tendresse.",dim:'120 × 45 cm',price:280,c1:'#E8DFD3',c2:'#C4A282'},
-{id:'m2',title:'Racines Éternelles',cat:'macrame',catL:'Macramé',tech:'Corde de jute et coton',desc:"Inspirée d'un arbre ancien, cette suspension murale évoque l'ancrage et la croissance. Les matières naturelles dialoguent avec l'espace.",dim:'150 × 60 cm',price:380,c1:'#8B7260',c2:'#E8DFD3'},
-{id:'m3',title:'Brume Matinale',cat:'macrame',catL:'Macramé',tech:'Coton peigné et perles de bois',desc:"Les franges vaporeuses évoquent la brume dansant au lever du jour. Les perles de bois ponctuent le fil comme des gouttes de rosée.",dim:'90 × 40 cm',price:220,c1:'#C5D4C0',c2:'#D4B5A0'},
-{id:'m4',title:'Cocon de Lumière',cat:'macrame',catL:'Macramé',tech:'Coton et fil doré',desc:"Suspension enveloppant l'espace d'une douce clarté filtrée. Le fil doré capte la lumière et la redistribue en reflets chaleureux.",dim:'80 × 35 cm',price:320,c1:'#C9A96E',c2:'#E8DFD3'},
-{id:'p1',title:'Forêt Secrète',cat:'pyrogravure',catL:'Pyrogravure',tech:'Pyrogravure sur tilleul',desc:"Les arbres se dessinent sous la pointe chauffée avec la finesse de la dentelle. Un sanctuaire hors du temps où la nature murmure.",dim:'40 × 30 cm',price:180,c1:'#8B7260',c2:'#5C4A3A'},
-{id:'p2',title:'Mandala Ancestral',cat:'pyrogravure',catL:'Pyrogravure',tech:'Pyrogravure sur hêtre',desc:"Un mandala hypnotique gravé avec précision minutieuse. Chaque cercle est une invitation à la méditation, chaque détail une porte vers l'infini.",dim:'50 × 50 cm',price:320,c1:'#C4A282',c2:'#5C4A3A'},
-{id:'p3',title:'Envol',cat:'pyrogravure',catL:'Pyrogravure',tech:'Pyrogravure et aquarelle sur bouleau',desc:"Un oiseau s'élance depuis les flammes apprivoisées. La combinaison pyrogravure et aquarelle crée un contraste saisissant et poétique.",dim:'45 × 35 cm',price:250,c1:'#B8A9C8',c2:'#8B7260'},
-{id:'p4',title:'Souffle de Terre',cat:'pyrogravure',catL:'Pyrogravure',tech:'Pyrogravure sur rondin de chêne',desc:"Sur un rondin poli, des motifs organiques se déploient comme les veines de la terre. Une œuvre ancrée dans la nature.",dim:'Ø 35 cm',price:200,c1:'#C9A96E',c2:'#5C4A3A'}
-];
+var ART=[]; /* chargé depuis data/oeuvres.json */
 
 var cart=[];
 
@@ -455,10 +446,14 @@ function openModal(id){
     document.getElementById('mTech').textContent=a.tech;
     document.getElementById('mDesc').textContent=a.desc;
     document.getElementById('mDim').textContent='Dimensions : '+a.dim;
-    document.getElementById('mPrice').innerHTML=a.price+' € <small>TTC</small>';
-    var img=document.getElementById('mImg');img.style.background='linear-gradient(135deg,'+a.c1+','+a.c2+')';img.textContent=a.title;
+    var sold=a.statut==='vendue';
+    document.getElementById('mPrice').innerHTML=sold?'Œuvre vendue':a.price+' € <small>TTC</small>';
+    var img=document.getElementById('mImg');
+    if(a.img){img.style.background='url(\''+a.img+'\') center/cover no-repeat';img.textContent='';}
+    else{img.style.background='linear-gradient(135deg,'+a.c1+','+a.c2+')';img.textContent=a.title;}
     var btn=document.getElementById('mCartBtn');var inC=cart.some(function(c){return c.id===a.id});
-    btn.textContent=inC?'✓ Dans le panier':'Ajouter au panier';btn.classList.toggle('ok',inC);
+    btn.disabled=sold;
+    btn.textContent=sold?'Œuvre vendue':(inC?'✓ Dans le panier':'Ajouter au panier');btn.classList.toggle('ok',inC&&!sold);
     btn.onclick=function(){addCart(a.id)};
     document.getElementById('modal').classList.add('open');document.body.style.overflow='hidden';
 }
@@ -468,7 +463,7 @@ document.getElementById('modalOv').onclick=closeModal;
 
 /* CART */
 function addCart(id){
-    var a=ART.find(function(x){return x.id===id});if(!a||cart.some(function(c){return c.id===a.id}))return;
+    var a=ART.find(function(x){return x.id===id});if(!a||a.statut==='vendue'||cart.some(function(c){return c.id===a.id}))return;
     cart.push(JSON.parse(JSON.stringify(a)));updCart();
     document.getElementById('mCartBtn').textContent='✓ Dans le panier';document.getElementById('mCartBtn').classList.add('ok');
     toast('"'+a.title+'" ajouté au panier');
@@ -498,15 +493,18 @@ function ckPay(e){e.preventDefault();closeCk();cart=[];updCart();toast('Commande
 function ctSend(e){e.preventDefault();e.target.reset();toast('Message envoyé !');return false}
 
 /* COLLECTION GRID */
+function cardBg(a){return a.img?'background:url(\''+a.img+'\') center/cover no-repeat':'background:linear-gradient(135deg,'+a.c1+','+a.c2+')'}
 function renderGrid(f){
     var arr=f==='all'?ART:ART.filter(function(a){return a.cat===f});
-    document.getElementById('colGrid').innerHTML=arr.map(function(a){return '<div class="card" onclick="openModal(\''+a.id+'\')"><div class="card-img" style="background:linear-gradient(135deg,'+a.c1+','+a.c2+')"><span>'+a.title+'</span></div><div class="card-body"><div class="cat">'+a.catL+'</div><div class="tit">'+a.title+'</div><div class="pri">'+a.price+' €</div></div></div>'}).join('');
+    document.getElementById('colGrid').innerHTML=arr.map(function(a){
+        var sold=a.statut==='vendue';
+        return '<div class="card'+(sold?' sold':'')+'" onclick="openModal(\''+a.id+'\')"><div class="card-img" style="'+cardBg(a)+'">'+(a.img?'':'<span>'+a.title+'</span>')+(sold?'<span class="sold-ribbon">Vendue</span>':'')+'</div><div class="card-body"><div class="cat">'+a.catL+'</div><div class="tit">'+a.title+'</div><div class="pri">'+(sold?'Vendue':a.price+' €')+'</div></div></div>'
+    }).join('');
 }
-renderGrid('all');
 document.querySelectorAll('.fbtn').forEach(function(b){b.onclick=function(){document.querySelectorAll('.fbtn').forEach(function(x){x.classList.remove('on')});b.classList.add('on');renderGrid(b.dataset.f)}});
 
 /* 3D GALLERY */
-(function(){
+function init3D(){
     if(typeof THREE==='undefined'){
         document.getElementById('galWrap').innerHTML='<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#E8DFD3;font-family:Lora,serif;font-style:italic;padding:2rem;text-align:center">La galerie 3D charge... Si rien ne s\'affiche, consultez les œuvres dans la grille ci-dessous.</div>';
         return;
@@ -537,6 +535,7 @@ document.querySelectorAll('.fbtn').forEach(function(b){b.onclick=function(){docu
     var ray=new THREE.Raycaster(),mpos=new THREE.Vector2();
 
     function mkTex(art){
+        if(art.img){var t=new THREE.TextureLoader().load(art.img);return t;}
         var cv=document.createElement('canvas');cv.width=256;cv.height=320;
         var ctx=cv.getContext('2d');var g=ctx.createLinearGradient(0,0,256,320);
         g.addColorStop(0,art.c1);g.addColorStop(1,art.c2);ctx.fillStyle=g;ctx.fillRect(0,0,256,320);
@@ -669,7 +668,13 @@ document.querySelectorAll('.fbtn').forEach(function(b){b.onclick=function(){docu
     window.addEventListener('resize',onResize);
     setTimeout(onResize,100);
     setTimeout(onResize,500);
-})();
+}
+
+/* CHARGEMENT DES ŒUVRES */
+fetch('data/oeuvres.json?v='+Date.now())
+    .then(function(r){if(!r.ok)throw new Error(r.status);return r.json()})
+    .then(function(d){ART=d;renderGrid('all');init3D();})
+    .catch(function(e){console.error('Erreur chargement des œuvres:',e);document.getElementById('colGrid').innerHTML='<p style="text-align:center;grid-column:1/-1;font-style:italic">Les œuvres arrivent bientôt…</p>'});
 </script>
 </body>
 </html>
