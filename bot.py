@@ -337,7 +337,10 @@ async def surveiller_drive(context: ContextTypes.DEFAULT_TYPE):
                 etiquette = f"🖼 {s['nom']}" + (f" ({libres} pl.)" if libres > 0 else " (complète)")
                 lignes_boutons.append([InlineKeyboardButton(
                     etiquette, callback_data=f"dv:{cle}:{s['id']}")])
-            lignes_boutons.append([InlineKeyboardButton("❌ Refuser", callback_data=f"dr:{cle}")])
+            lignes_boutons.append([
+                InlineKeyboardButton("🔀 Autre salle…", callback_data=f"da:{cle}"),
+                InlineKeyboardButton("❌ Refuser", callback_data=f"dr:{cle}"),
+            ])
             boutons = InlineKeyboardMarkup(lignes_boutons)
             meilleure = salles[0][0]["nom"] if salles else "?"
             fmt = "paysage" if ratio > 1.05 else ("carré" if ratio > 0.95 else "portrait")
@@ -370,6 +373,25 @@ async def rep_drive(update: Update, context: ContextTypes.DEFAULT_TYPE):
     parts = q.data.split(":")
     action, cle = parts[0], parts[1]
     salle_choisie = parts[2] if len(parts) > 2 else None
+    if action == "da":
+        # Déplier toutes les salles, groupées par aile (la proposition reste en attente)
+        if cle not in context.bot_data.get("attente", {}):
+            await q.edit_message_caption(caption="⏰ Proposition expirée (bot redémarré).")
+            return
+        toutes = lire_salles()
+        data_oeuvres = lire_oeuvres()
+        lignes_boutons = []
+        for s in toutes:
+            aile = CATS.get(s.get("groupe", s["id"]), "?")
+            occ = sum(1 for o in data_oeuvres if salle_de(o) == s["id"])
+            libres = PLACES_PAR_SALLE - occ
+            etiquette = f"{s.get('emoji','🖼')} {s['nom']} — {aile}s" + (
+                f" ({libres} pl.)" if libres > 0 else " (complète)")
+            lignes_boutons.append([InlineKeyboardButton(
+                etiquette, callback_data=f"dv:{cle}:{s['id']}")])
+        lignes_boutons.append([InlineKeyboardButton("❌ Refuser", callback_data=f"dr:{cle}")])
+        await q.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(lignes_boutons))
+        return
     item = context.bot_data.get("attente", {}).pop(cle, None)
     if not item:
         await q.edit_message_caption(caption="⏰ Proposition expirée (bot redémarré).")
@@ -379,12 +401,17 @@ async def rep_drive(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     data = lire_oeuvres()
     infos = item["infos"]
-    oid = nouvel_id(data, infos["categorie"])
-    chemin = enregistrer_image(oid, infos["titre"], item["photo"])
     salle_finale = salle_choisie or infos["categorie"]
+    # La catégorie suit l'aile de la salle choisie (corrige les erreurs de l'IA)
+    salle_obj = next((s for s in lire_salles() if s["id"] == salle_finale), None)
+    categorie = salle_obj.get("groupe", salle_obj["id"]) if salle_obj else infos["categorie"]
+    if categorie not in CATS:
+        categorie = infos["categorie"]
+    oid = nouvel_id(data, categorie)
+    chemin = enregistrer_image(oid, infos["titre"], item["photo"])
     data.append({
-        "id": oid, "title": infos["titre"], "cat": infos["categorie"],
-        "catL": CATS[infos["categorie"]], "tech": infos["technique"],
+        "id": oid, "title": infos["titre"], "cat": categorie,
+        "catL": CATS[categorie], "tech": infos["technique"],
         "desc": infos["description"], "dim": "", "price": 0,
         "c1": "#C4A282", "c2": "#A3B5A0", "img": chemin, "statut": "disponible",
         "salle": salle_finale, "ratio": item.get("ratio"),
@@ -423,6 +450,7 @@ async def cmd_liste(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not data:
         await update.message.reply_text("La galerie est vide.")
         return
+    salles = {s["id"]: s for s in lire_salles()}
     lignes = []
     for c, label in CATS.items():
         oeuvres = [o for o in data if o["cat"] == c]
@@ -431,7 +459,11 @@ async def cmd_liste(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for o in oeuvres:
                 etat = "🔴 vendue" if o.get("statut") == "vendue" else "🟢"
                 photo = "📷" if o.get("img") else "▫️"
-                lignes.append(f"{etat} {photo} {o['id']} · {o['title']} · {o['price']} €")
+                s = salles.get(salle_de(o))
+                nom_salle = f"{s.get('emoji','🖼')} {s['nom']}" if s else "?"
+                prix = f"{o['price']} €" if o.get("price") else "prix à fixer"
+                lignes.append(f"{etat} {photo} {o['id']} · {o['title']} · {prix} · {nom_salle}")
+    lignes.append("\nAjuster : /titre <id> <nom> · /prix <id> <montant> · /deplacer <id> <salle>")
     await update.message.reply_text("\n".join(lignes))
 
 
