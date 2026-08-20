@@ -1,0 +1,14 @@
+[Unit]
+Description=Boutique Stripe nmouffok.fr
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+WorkingDirectory=/opt/nmouffok-shop
+ExecStart=/opt/nmouffok-shop/venv/bin/python boutique.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

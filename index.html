@@ -572,7 +572,26 @@ function closeCart(){document.getElementById('cpan').classList.remove('open');do
 document.getElementById('cpanX').onclick=closeCart;document.getElementById('cpanOv').onclick=closeCart;
 
 /* CHECKOUT */
-document.getElementById('btnCk').onclick=function(){if(!cart.length){toast('Panier vide');return}closeCart();openCk()};
+document.getElementById('btnCk').onclick=function(){if(!cart.length){toast('Panier vide');return}payerStripe()};
+function payerStripe(){
+    var btn=document.getElementById('btnCk');btn.disabled=true;btn.textContent='Redirection sécurisée…';
+    fetch('/api/boutique/checkout',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({ids:cart.map(function(c){return c.id})})})
+    .then(function(r){return r.json().then(function(d){return {ok:r.ok,d:d}})})
+    .then(function(res){
+        if(res.ok&&res.d.url){location.href=res.d.url}
+        else{toast(res.d.erreur||'Paiement indisponible');btn.disabled=false;btn.textContent='Procéder au paiement'}
+    })
+    .catch(function(){toast('Paiement indisponible pour le moment');btn.disabled=false;btn.textContent='Procéder au paiement'});
+}
+/* Retour de Stripe */
+(function(){
+    var pm=new URLSearchParams(location.search).get('paiement');
+    if(!pm)return;
+    if(pm==='ok'){cart=[];updCart();setTimeout(function(){toast('Paiement confirmé — merci ! ✨')},600)}
+    else if(pm==='annule'){setTimeout(function(){toast('Paiement annulé')},600)}
+    history.replaceState(null,'',location.pathname+'#gal');
+})();
 function openCk(){
     var tot=cart.reduce(function(s,i){return s+i.price},0);
     document.getElementById('ckSum').innerHTML=cart.map(function(i){return '<div class="ck-si"><span>'+i.title+'</span><span>'+i.price+' €</span></div>'}).join('')+'<div class="ck-st"><span>Total</span><span>'+tot+' €</span></div>';
